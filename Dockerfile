@@ -9,7 +9,8 @@ WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN go build -ldflags="-s -w -X main.appVersion=${VERSION}" -o app main.go
+RUN make build_linux
+RUN #go build -ldflags="-s -w -X main.appVersion=${VERSION}" -o app main.go
 
 # STAGE 2: build the container to run
 FROM gcr.io/distroless/static AS final

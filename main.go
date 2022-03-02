@@ -16,7 +16,7 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	log.Info("start_service", zap.String("version", version.Version), zap.Any("config", cfg))
+	log.Info("start_service", zap.String("version", version.Version), zap.String("build_date", version.BuildDate), zap.Any("config", cfg))
 
 	ctx, cancel := context.WithCancel(context.Background())
 	c := collector.NewCollector(cfg, log, ctx)
