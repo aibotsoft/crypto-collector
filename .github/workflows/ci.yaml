@@ -29,23 +29,17 @@ jobs:
       - name: Prepare
         id: prep
         run: |
-          echo "RELEASE_VERSION=${GITHUB_REF#refs/*/}" >> $GITHUB_ENV
-          echo from_RELEASE_VERSION: $RELEASE_VERSION
-          echo from_ref_name: ${{github.ref_name}}
-          echo from_env: ${{ env.RELEASE_VERSION }}
           VERSION=sha-${GITHUB_SHA::8}
           if [[ $GITHUB_REF == refs/tags/* ]]; then
             VERSION=${GITHUB_REF/refs\/tags\//}
           fi
-          echo "VERSION=${VERSION}" >> $GITHUB_ENV
-          echo from_env_version: ${{ env.VERSION }}
-
-          echo ::set-output name=BUILD_DATE::$(date -u +'%Y-%m-%dT%H:%M:%SZ')
-          echo ::set-output name=VERSION::${VERSION}
-          PKG='github.com/aibotsoft/crypto-collector/pkg'
+          BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+          PKG=github.com/${{ github.REPOSITORY_OWNER }}/crypto-collector/pkg
           LDFLAGS="-w -s -X $PKG/version.Version=$VERSION -X $PKG/version.BuildDate=$BUILD_DATE"
+          
           echo ::set-output name=LDFLAGS::${LDFLAGS}
-      
+          echo ::set-output name=BUILD_DATE::${BUILD_DATE}
+          echo ::set-output name=VERSION::${VERSION}
       
 
       - name: Set up Docker Buildx
@@ -62,8 +56,8 @@ jobs:
           context: .
           push: true
           build-args: |
-            VERSION=${{ steps.prep.outputs.VERSION }}
-            BUILD_DATE=${{ steps.prep.outputs.BUILD_DATE }}
+#            VERSION=${{ steps.prep.outputs.VERSION }}
+#            BUILD_DATE=${{ steps.prep.outputs.BUILD_DATE }}
             LDFLAGS=${{ steps.prep.outputs.LDFLAGS }}
           tags: |
             ghcr.io/${{ github.REPOSITORY_OWNER }}/${{ github.event.repository.name }}:${{ steps.prep.outputs.VERSION }}
