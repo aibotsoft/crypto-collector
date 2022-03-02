@@ -3,14 +3,15 @@ FROM golang:alpine AS build
 # ENV HOME /src
 ENV CGO_ENABLED 0
 ENV GOOS linux
-#ARG VERSION
+ARG VERSION
+RUN echo $VERSION
+
 
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN make build_linux
-RUN #go build -ldflags="-s -w -X main.appVersion=${VERSION}" -o app main.go
+RUN go build -ldflags="-s -w -X main.appVersion=${VERSION}" -o app main.go
 
 # STAGE 2: build the container to run
 FROM gcr.io/distroless/static AS final

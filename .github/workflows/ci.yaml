@@ -53,7 +53,8 @@ jobs:
         with:
           context: .
           push: true
-#          tags: user/app:latest
+          build-args: |
+            VERSION=fuckoff
           tags: |
             ghcr.io/${{ github.REPOSITORY_OWNER }}/${{ github.event.repository.name }}:${{ steps.prep.outputs.VERSION }}
             ghcr.io/${{ github.REPOSITORY_OWNER }}/${{ github.event.repository.name }}:latest
