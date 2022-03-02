@@ -55,6 +55,7 @@ jobs:
           push: true
           build-args: |
             VERSION=fuckoff
+            BUILD_DATE=now
           tags: |
             ghcr.io/${{ github.REPOSITORY_OWNER }}/${{ github.event.repository.name }}:${{ steps.prep.outputs.VERSION }}
             ghcr.io/${{ github.REPOSITORY_OWNER }}/${{ github.event.repository.name }}:latest
