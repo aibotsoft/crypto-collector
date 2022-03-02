@@ -9,7 +9,7 @@ ARG BUILD_DATE
 ARG PKG='github.com/aibotsoft/crypto-collector/pkg'
 RUN echo $PKG
 
-ARG LDFLAGS='-w -s -X $(PKG)/version.Version=$(VERSION) -X $(PKG)/version.BuildDate=$(BUILD_DATE)'
+ARG LDFLAGS="-w -s -X $PKG/version.Version=$VERSION -X $PKG/version.BuildDate=$BUILD_DATE"
 RUN echo $LDFLAGS
 
 
@@ -18,7 +18,7 @@ WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN go build -ldflags="$(LDFLAGS)" -o app main.go
+RUN go build -ldflags="$LDFLAGS" -o app main.go
 
 # STAGE 2: build the container to run
 FROM gcr.io/distroless/static AS final
