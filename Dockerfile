@@ -1,7 +1,7 @@
 FROM golang:alpine AS build
 # Working directory will be created if it does not exist
-ENV CGO_ENABLED 0
-ENV GOOS linux
+#ENV CGO_ENABLED 0
+#ENV GOOS linux
 ARG LDFLAGS
 WORKDIR /src
 COPY go.mod go.sum ./
