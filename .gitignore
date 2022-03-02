@@ -1,5 +1,5 @@
 play
 .idea
 .env
-*.yaml
 dist
+crypto-collector.yaml
