@@ -42,6 +42,11 @@ jobs:
 
           echo ::set-output name=BUILD_DATE::$(date -u +'%Y-%m-%dT%H:%M:%SZ')
           echo ::set-output name=VERSION::${VERSION}
+          PKG='github.com/aibotsoft/crypto-collector/pkg'
+          LDFLAGS="-w -s -X $PKG/version.Version=$VERSION -X $PKG/version.BuildDate=$BUILD_DATE"
+          echo ::set-output name=LDFLAGS::${LDFLAGS}
+      
+      
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v1
@@ -59,6 +64,7 @@ jobs:
           build-args: |
             VERSION=${{ steps.prep.outputs.VERSION }}
             BUILD_DATE=${{ steps.prep.outputs.BUILD_DATE }}
+            LDFLAGS=${{ steps.prep.outputs.LDFLAGS }}
           tags: |
             ghcr.io/${{ github.REPOSITORY_OWNER }}/${{ github.event.repository.name }}:${{ steps.prep.outputs.VERSION }}
             ghcr.io/${{ github.REPOSITORY_OWNER }}/${{ github.event.repository.name }}:latest

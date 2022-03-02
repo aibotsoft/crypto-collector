@@ -5,12 +5,13 @@ ENV CGO_ENABLED 0
 ENV GOOS linux
 ARG VERSION
 ARG BUILD_DATE
+ARG LDFLAGS
 
-ARG PKG='github.com/aibotsoft/crypto-collector/pkg'
-RUN echo $PKG
+#ARG PKG='github.com/aibotsoft/crypto-collector/pkg'
+#RUN echo $PKG
 
-ARG LDFLAGS="-w -s -X $PKG/version.Version=$VERSION -X $PKG/version.BuildDate=$BUILD_DATE"
-RUN echo $LDFLAGS
+#ARG LDFLAGS="-w -s -X $PKG/version.Version=$VERSION -X $PKG/version.BuildDate=$BUILD_DATE"
+#RUN echo $LDFLAGS
 
 
 
