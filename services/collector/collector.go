@@ -23,6 +23,7 @@ const ftxExchange = "ftx"
 const usdt = "USDT"
 const usd = "USD"
 const usdtMarket = "USDT/USD"
+
 var d100 = decimal.RequireFromString("100")
 
 type Collector struct {
