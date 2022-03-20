@@ -42,7 +42,7 @@ func (w *WsClient) ConnectAndSubscribe() error {
 	start := time.Now()
 	dialCtx, cancel := context.WithTimeout(w.ctx, w.cfg.Ws.ConnTimeout)
 	defer cancel()
-	c, _, err := websocket.DefaultDialer.DialContext(dialCtx, w.cfg.Fxt.WsHost, nil)
+	c, _, err := websocket.DefaultDialer.DialContext(dialCtx, w.cfg.Ftx.WsHost, nil)
 	if err != nil {
 		return fmt.Errorf("dial_error: %w", err)
 	}
@@ -52,11 +52,18 @@ func (w *WsClient) ConnectAndSubscribe() error {
 	if err != nil {
 		return fmt.Errorf("subscribe_error: %w", err)
 	}
-	w.log.Info("ws_connect_done", zap.String("service", w.cfg.Fxt.Name), zap.Duration("elapsed", time.Since(start)))
+	w.log.Info("ws_connect_done", zap.String("service", w.cfg.Ftx.Name), zap.Duration("elapsed", time.Since(start)))
 	return nil
 }
 func (w *WsClient) Subscribe() error {
 	subscribeStart = time.Now()
+	if w.cfg.Service.EnableUSD {
+		err := w.Conn.WriteJSON(Request{Op: "subscribe", Channel: "ticker", Market: "usdt/usd"})
+		if err != nil {
+			return fmt.Errorf("subscribe_error: %w, market: %s", err, "usdt/usd")
+		}
+	}
+
 	for _, c := range w.cfg.Markets {
 		err := w.Conn.WriteJSON(Request{Op: "subscribe", Channel: "ticker", Market: fmt.Sprintf("%s/usdt", c)})
 		if err != nil {
@@ -77,14 +84,14 @@ func (w *WsClient) Ping() {
 	pingStart = time.Now()
 	err := w.Conn.WritePreparedMessage(pingMsg)
 	if err != nil {
-		w.log.Warn("write_ping_error", zap.String("service", w.cfg.Fxt.Name), zap.Error(err))
+		w.log.Warn("write_ping_error", zap.String("service", w.cfg.Ftx.Name), zap.Error(err))
 	}
 }
 
 func (w *WsClient) ReadLoop() {
 	for {
 		if w.Conn == nil {
-			w.log.Debug("conn_nil", zap.String("service", w.cfg.Fxt.Name))
+			w.log.Debug("conn_nil", zap.String("service", w.cfg.Ftx.Name))
 			time.Sleep(time.Millisecond * 50)
 			continue
 		}
@@ -122,14 +129,14 @@ func (w *WsClient) Serve() error {
 	for {
 		select {
 		case <-w.ctx.Done():
-			w.log.Info("close_fxt_ws_conn", zap.String("service", w.cfg.Fxt.Name))
+			w.log.Info("close_fxt_ws_conn", zap.String("service", w.cfg.Ftx.Name))
 			w.Conn.Close()
 			return nil
 		case err := <-w.errCh:
-			w.log.Info("serve_error", zap.String("service", w.cfg.Fxt.Name), zap.Error(err))
+			w.log.Info("serve_error", zap.String("service", w.cfg.Ftx.Name), zap.Error(err))
 			err = w.ConnectAndSubscribe()
 			if err != nil {
-				w.log.Warn("ConnectAndSubscribe_error", zap.String("service", w.cfg.Fxt.Name), zap.Error(err))
+				w.log.Warn("ConnectAndSubscribe_error", zap.String("service", w.cfg.Ftx.Name), zap.Error(err))
 				//time.Sleep(time.Second)
 			}
 		//case <-failTimer:

@@ -27,4 +27,5 @@ type Surebet struct {
 	AvgPriceDiff decimal.Decimal `json:"avg_price_diff"`
 	MaxPriceDiff decimal.Decimal `json:"max_price_diff"`
 	MinPriceDiff decimal.Decimal `json:"min_price_diff"`
+	UsdtPrice    decimal.Decimal `json:"usdt_price"`
 }

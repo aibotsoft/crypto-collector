@@ -23,8 +23,8 @@ type Config struct {
 		WsHost string `json:"ws_host" default:"wss://stream.binance.com:9443/stream?streams="`
 		Debug  bool   `json:"debug" default:"false"`
 	} `json:"binance"`
-	Fxt struct {
-		Name   string `json:"name" default:"fxt"`
+	Ftx struct {
+		Name   string `json:"name" default:"ftx"`
 		WsHost string `json:"ws_host" default:"wss://ftx.com/ws/"`
 	} `json:"fxt"`
 

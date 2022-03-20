@@ -20,6 +20,11 @@ import (
 const cryptoSubject = "crypto-surebet"
 const binanceExchange = "binance"
 const ftxExchange = "ftx"
+const usdt = "USDT"
+const usd = "USD"
+const usdtMarket = "USDT/USD"
+
+var d100 = decimal.RequireFromString("100")
 
 type Collector struct {
 	cfg             *config.Config
@@ -38,8 +43,9 @@ type Collector struct {
 	binCountMap map[string]*atomic.Int64
 	lastBinTime int64
 
-	idLock sync.Mutex
-	lastID int64
+	idLock    sync.Mutex
+	lastID    int64
+	usdtPrice decimal.Decimal
 }
 
 func NewCollector(cfg *config.Config, log *zap.Logger, ctx context.Context) *Collector {
@@ -55,32 +61,35 @@ func NewCollector(cfg *config.Config, log *zap.Logger, ctx context.Context) *Col
 		maPriceMap:  make(map[string]*movingaverage.MovingAverage),
 		ftxCountMap: make(map[string]*atomic.Int64),
 		binCountMap: make(map[string]*atomic.Int64),
+		usdtPrice:   decimal.RequireFromString("1"),
 	}
 }
 func (c *Collector) Run() error {
 	for _, m := range c.cfg.Markets {
-		c.binFtxSymbolMap[fmt.Sprintf("%s%s", strings.ToUpper(m), "USDT")] = fmt.Sprintf("%s/%s", strings.ToUpper(m), "USDT")
-		c.binFtxSymbolMap[fmt.Sprintf("%s/%s", strings.ToUpper(m), "USDT")] = fmt.Sprintf("%s%s", strings.ToUpper(m), "USDT")
-		c.binFtxSymbolMap[fmt.Sprintf("%s/%s", strings.ToUpper(m), "USD")] = fmt.Sprintf("%s%s", strings.ToUpper(m), "USDT")
+		c.binFtxSymbolMap[fmt.Sprintf("%s%s", strings.ToUpper(m), usdt)] = fmt.Sprintf("%s/%s", strings.ToUpper(m), usdt)
+		c.binFtxSymbolMap[fmt.Sprintf("%s/%s", strings.ToUpper(m), usdt)] = fmt.Sprintf("%s%s", strings.ToUpper(m), usdt)
+		c.binFtxSymbolMap[fmt.Sprintf("%s/%s", strings.ToUpper(m), usd)] = fmt.Sprintf("%s%s", strings.ToUpper(m), usdt)
 	}
 	for _, m := range c.cfg.Markets {
-		symbol := fmt.Sprintf("%s/%s", strings.ToUpper(m), "USDT")
+		symbol := fmt.Sprintf("%s/%s", strings.ToUpper(m), usdt)
 		t := TickerData{Symbol: symbol}
 		c.fxtMap.Store(symbol, &t)
 		c.maPriceMap[symbol] = movingaverage.New(c.cfg.Service.AverageWindow)
 		c.ftxCountMap[symbol] = &atomic.Int64{}
 
 		if c.cfg.Service.EnableUSD {
-			usdSymbol := fmt.Sprintf("%s/%s", strings.ToUpper(m), "USD")
+			usdSymbol := fmt.Sprintf("%s/%s", strings.ToUpper(m), usd)
 			c.log.Info("symbol", zap.String("", usdSymbol))
 			t2 := TickerData{Symbol: usdSymbol}
 			c.fxtMap.Store(usdSymbol, &t2)
 			c.maPriceMap[usdSymbol] = movingaverage.New(c.cfg.Service.AverageWindow)
+			c.ftxCountMap[usdSymbol] = &atomic.Int64{}
+
 		}
 	}
 
 	for _, m := range c.cfg.Markets {
-		symbol := fmt.Sprintf("%s%s", strings.ToUpper(m), "USDT")
+		symbol := fmt.Sprintf("%s%s", strings.ToUpper(m), usdt)
 		b := TickerData{Symbol: symbol}
 		c.binMap.Store(symbol, &b)
 		c.binCountMap[symbol] = &atomic.Int64{}
@@ -121,7 +130,7 @@ func (c *Collector) printStat() {
 	t := tabby.New()
 	t.AddHeader("symbol", "ma", "count", "min", "max", "bin_all")
 	for _, m := range c.cfg.Markets {
-		symbol := fmt.Sprintf("%s/%s", strings.ToUpper(m), "USDT")
+		symbol := fmt.Sprintf("%s/%s", strings.ToUpper(m), usdt)
 		ma := c.maPriceMap[symbol]
 		min, _ := ma.Min()
 		max, _ := ma.Max()
@@ -135,6 +144,24 @@ func (c *Collector) printStat() {
 		)
 		c.ftxCountMap[symbol].Store(0)
 	}
+	if c.cfg.Service.EnableUSD {
+		for _, m := range c.cfg.Markets {
+			symbol := fmt.Sprintf("%s/%s", strings.ToUpper(m), usd)
+			ma := c.maPriceMap[symbol]
+			min, _ := ma.Min()
+			max, _ := ma.Max()
+			t.AddLine(symbol,
+				fmt.Sprintf("%.5f", ma.Avg()),
+				ma.Count(),
+				//ma.SlotsFilled(),
+				fmt.Sprintf("%.5f", min),
+				fmt.Sprintf("%.5f", max),
+				c.ftxCountMap[symbol].Load(),
+			)
+			c.ftxCountMap[symbol].Store(0)
+		}
+	}
+
 	//for symbol, ma := range c.maPriceMap {
 	//	min, _ := ma.Min()
 	//	max, _ := ma.Max()
@@ -210,7 +237,13 @@ func (c *Collector) send(t *TickerData, e string) {
 	if sb.FtxTicker.AskPrice.IsZero() || sb.BinTicker.AskPrice.IsZero() {
 		return
 	}
+	sb.UsdtPrice = c.usdtPrice
+
 	avgFtx := decimal.Avg(sb.FtxTicker.AskPrice, sb.FtxTicker.BidPrice)
+	if strings.Index(sb.FtxTicker.Symbol, usdt) == -1 {
+		avgFtx = avgFtx.Div(sb.UsdtPrice)
+	}
+
 	diff := decimal.Avg(sb.BinTicker.AskPrice, sb.BinTicker.BidPrice).Sub(avgFtx).Div(avgFtx).Mul(d100)
 	ma := c.maPriceMap[sb.FtxTicker.Symbol]
 	ma.Add(diff.InexactFloat64())
@@ -229,8 +262,6 @@ func (c *Collector) send(t *TickerData, e string) {
 		c.log.Warn("send_error", zap.Error(err))
 	}
 }
-
-var d100 = decimal.RequireFromString("100")
 
 func (c *Collector) createID(id int64) int64 {
 	c.idLock.Lock()

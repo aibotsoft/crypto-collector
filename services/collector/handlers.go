@@ -51,6 +51,12 @@ func (c *Collector) binanceHandler(e *binance_ws.WsBookTickerEvent) {
 }
 
 func (c *Collector) fxtHandler(e *ftx_ws.Response) {
+	if e.Market == usdtMarket {
+		//c.log.Info("e", zap.Any("e", e))
+		c.usdtPrice = e.Data.Bid
+		return
+	}
+
 	ftxAll.Inc()
 	c.ftxCountMap[e.Market].Inc()
 
@@ -69,7 +75,6 @@ func (c *Collector) fxtHandler(e *ftx_ws.Response) {
 	t.PrevAskQty = prev.AskQty
 	t.PrevServerTime = prev.ServerTime
 	t.PrevReceiveTime = prev.ReceiveTime
-
 	ftxDelayList = append(ftxDelayList, t.ReceiveTime-t.ServerTime)
 
 	if !t.BidPrice.Equal(t.PrevBidPrice) || !t.AskPrice.Equal(t.PrevAskPrice) {
