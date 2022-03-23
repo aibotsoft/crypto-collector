@@ -22,26 +22,26 @@ const binanceExchange = "binance"
 const ftxExchange = "ftx"
 const usdt = "USDT"
 const usd = "USD"
-const usdtMarket = "USDT/USD"
+const usdUsdtMarket = "USDT/USD"
 
 var d100 = decimal.RequireFromString("100")
 
 type Collector struct {
-	cfg             *config.Config
-	log             *zap.Logger
-	ctx             context.Context
-	binMap          sync.Map
-	fxtMap          sync.Map
-	errCh           chan error
-	ftxClient       *ftx_ws.WsClient
-	binClient       *binance_ws.WsClient
-	ec              *nats.EncodedConn
-	binFtxSymbolMap map[string]string
-	//avgPriceMap     map[string][]decimal.Decimal
-	maPriceMap  map[string]*movingaverage.MovingAverage
-	ftxCountMap map[string]*atomic.Int64
-	binCountMap map[string]*atomic.Int64
-	lastBinTime int64
+	cfg                *config.Config
+	log                *zap.Logger
+	ctx                context.Context
+	binMap             sync.Map
+	fxtMap             sync.Map
+	errCh              chan error
+	ftxClient          *ftx_ws.WsClient
+	binClient          *binance_ws.WsClient
+	ec                 *nats.EncodedConn
+	binFtxSymbolMap    map[string]string
+	binFtxUsdSymbolMap map[string]string
+	maPriceMap         map[string]*movingaverage.MovingAverage
+	ftxCountMap        map[string]*atomic.Int64
+	binCountMap        map[string]*atomic.Int64
+	lastBinTime        int64
 
 	idLock    sync.Mutex
 	lastID    int64
@@ -50,23 +50,25 @@ type Collector struct {
 
 func NewCollector(cfg *config.Config, log *zap.Logger, ctx context.Context) *Collector {
 	return &Collector{
-		cfg:             cfg,
-		log:             log,
-		ctx:             ctx,
-		errCh:           make(chan error),
-		ftxClient:       ftx_ws.NewWsClient(cfg, log, ctx),
-		binClient:       binance_ws.NewWsClient(cfg, log, ctx),
-		binFtxSymbolMap: make(map[string]string),
-		//avgPriceMap:     make(map[string][]decimal.Decimal),
-		maPriceMap:  make(map[string]*movingaverage.MovingAverage),
-		ftxCountMap: make(map[string]*atomic.Int64),
-		binCountMap: make(map[string]*atomic.Int64),
-		usdtPrice:   decimal.RequireFromString("1"),
+		cfg:                cfg,
+		log:                log,
+		ctx:                ctx,
+		errCh:              make(chan error),
+		ftxClient:          ftx_ws.NewWsClient(cfg, log, ctx),
+		binClient:          binance_ws.NewWsClient(cfg, log, ctx),
+		binFtxSymbolMap:    make(map[string]string),
+		binFtxUsdSymbolMap: make(map[string]string),
+		maPriceMap:         make(map[string]*movingaverage.MovingAverage),
+		ftxCountMap:        make(map[string]*atomic.Int64),
+		binCountMap:        make(map[string]*atomic.Int64),
+		usdtPrice:          decimal.RequireFromString("1"),
 	}
 }
 func (c *Collector) Run() error {
 	for _, m := range c.cfg.Markets {
 		c.binFtxSymbolMap[fmt.Sprintf("%s%s", strings.ToUpper(m), usdt)] = fmt.Sprintf("%s/%s", strings.ToUpper(m), usdt)
+		c.binFtxUsdSymbolMap[fmt.Sprintf("%s%s", strings.ToUpper(m), usdt)] = fmt.Sprintf("%s/%s", strings.ToUpper(m), usd)
+
 		c.binFtxSymbolMap[fmt.Sprintf("%s/%s", strings.ToUpper(m), usdt)] = fmt.Sprintf("%s%s", strings.ToUpper(m), usdt)
 		c.binFtxSymbolMap[fmt.Sprintf("%s/%s", strings.ToUpper(m), usd)] = fmt.Sprintf("%s%s", strings.ToUpper(m), usdt)
 	}
@@ -79,7 +81,7 @@ func (c *Collector) Run() error {
 
 		if c.cfg.Service.EnableUSD {
 			usdSymbol := fmt.Sprintf("%s/%s", strings.ToUpper(m), usd)
-			c.log.Info("symbol", zap.String("", usdSymbol))
+			c.log.Debug("usd_symbol", zap.String("symbol", usdSymbol))
 			t2 := TickerData{Symbol: usdSymbol}
 			c.fxtMap.Store(usdSymbol, &t2)
 			c.maPriceMap[usdSymbol] = movingaverage.New(c.cfg.Service.AverageWindow)
@@ -225,14 +227,14 @@ func avgDelay(list []int64) time.Duration {
 	return time.Duration(total / int64(len(list)))
 }
 
-func (c *Collector) send(t *TickerData, e string) {
+func (c *Collector) send(t *TickerData, e string, symbol string) {
 	var sb Surebet
 	if e == binanceExchange {
-		sb.FtxTicker = c.loadTicker(c.binFtxSymbolMap[t.Symbol])
+		sb.FtxTicker = c.loadTicker(symbol)
 		sb.BinTicker = t
 	} else {
 		sb.FtxTicker = t
-		sb.BinTicker = c.loadBinance(c.binFtxSymbolMap[t.Symbol])
+		sb.BinTicker = c.loadBinance(symbol)
 	}
 	if sb.FtxTicker.AskPrice.IsZero() || sb.BinTicker.AskPrice.IsZero() {
 		return
@@ -247,6 +249,7 @@ func (c *Collector) send(t *TickerData, e string) {
 	diff := decimal.Avg(sb.BinTicker.AskPrice, sb.BinTicker.BidPrice).Sub(avgFtx).Div(avgFtx).Mul(d100)
 	ma := c.maPriceMap[sb.FtxTicker.Symbol]
 	ma.Add(diff.InexactFloat64())
+
 	if !ma.SlotsFilled() {
 		return
 	}
@@ -261,6 +264,15 @@ func (c *Collector) send(t *TickerData, e string) {
 	if err != nil {
 		c.log.Warn("send_error", zap.Error(err))
 	}
+	//if e == binanceExchange {
+	//	c.log.Info("sb",
+	//		zap.Any("e", e),
+	//		zap.Any("symbol", symbol),
+	//		zap.Any("id", sb.ID),
+	//		zap.Any("ftx", sb.FtxTicker),
+	//	)
+	//}
+
 }
 
 func (c *Collector) createID(id int64) int64 {

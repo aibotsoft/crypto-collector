@@ -14,9 +14,12 @@ type Config struct {
 		AverageWindow int           `json:"average_window"`
 	} `json:"service"`
 	Zap struct {
-		Level         string `json:"level" default:"info"`
-		Encoding      string `json:"encoding" default:"console"`
-		DisableCaller bool   `json:"disable_caller" default:"true"`
+		//debug, info, warn, error, fatal, panic
+		Level string `json:"level" default:"info"`
+		//console, json
+		Encoding string `json:"encoding" default:"console"`
+		//disable, short, full
+		Caller string `json:"caller" default:"short"`
 	} `json:"zap"`
 	Binance struct {
 		Name   string `json:"name" default:"binance"`

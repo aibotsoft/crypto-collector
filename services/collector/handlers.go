@@ -18,8 +18,7 @@ func (c *Collector) loadBinance(symbol string) *TickerData {
 func (c *Collector) loadTicker(symbol string) *TickerData {
 	got, ok := c.fxtMap.Load(symbol)
 	if !ok {
-		c.log.Info("symbol", zap.String("symbol", symbol))
-
+		c.log.Info("not_found_symbol", zap.String("symbol", symbol))
 	}
 	return got.(*TickerData)
 }
@@ -44,14 +43,17 @@ func (c *Collector) binanceHandler(e *binance_ws.WsBookTickerEvent) {
 	t.PrevReceiveTime = prev.ReceiveTime
 
 	if !t.BidPrice.Equal(t.PrevBidPrice) || !t.AskPrice.Equal(t.PrevAskPrice) {
-		c.log.Debug("binance_event", zap.Any("t", t))
 		binSend.Inc()
-		c.send(t, binanceExchange)
+		c.send(t, binanceExchange, c.binFtxSymbolMap[t.Symbol])
+		c.send(t, binanceExchange, c.binFtxUsdSymbolMap[t.Symbol])
+		//c.log.Debug("binance_event",
+		//	zap.Any("t", t),
+		//	)
 	}
 }
 
 func (c *Collector) fxtHandler(e *ftx_ws.Response) {
-	if e.Market == usdtMarket {
+	if e.Market == usdUsdtMarket {
 		//c.log.Info("e", zap.Any("e", e))
 		c.usdtPrice = e.Data.Bid
 		return
@@ -78,8 +80,11 @@ func (c *Collector) fxtHandler(e *ftx_ws.Response) {
 	ftxDelayList = append(ftxDelayList, t.ReceiveTime-t.ServerTime)
 
 	if !t.BidPrice.Equal(t.PrevBidPrice) || !t.AskPrice.Equal(t.PrevAskPrice) {
-		c.log.Debug("ftx_event", zap.Any("t", t))
+		c.send(t, ftxExchange, c.binFtxSymbolMap[t.Symbol])
+		//c.log.Info("ftx_event",
+		//	zap.Any("t", t),
+		//	zap.Any("symbol", c.binFtxSymbolMap[t.Symbol]),
+		//)
 		ftxSend.Inc()
-		c.send(t, ftxExchange)
 	}
 }

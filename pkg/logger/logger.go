@@ -1,31 +1,39 @@
 package logger
 
 import (
-	"github.com/aibotsoft/crypto-collector/pkg/config"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
 
-func NewLogger(cfg *config.Config) (*zap.Logger, error) {
-	level := zap.NewAtomicLevelAt(zapcore.InfoLevel)
-	switch cfg.Zap.Level {
+func NewLogger(level string, encoding string, caller string) (*zap.Logger, error) {
+	lvl := zap.NewAtomicLevelAt(zapcore.InfoLevel)
+	development := false
+	switch level {
 	case "debug":
-		level = zap.NewAtomicLevelAt(zapcore.DebugLevel)
+		lvl = zap.NewAtomicLevelAt(zapcore.DebugLevel)
+		development = true
 	case "info":
-		level = zap.NewAtomicLevelAt(zapcore.InfoLevel)
+		lvl = zap.NewAtomicLevelAt(zapcore.InfoLevel)
 	case "warn":
-		level = zap.NewAtomicLevelAt(zapcore.WarnLevel)
+		lvl = zap.NewAtomicLevelAt(zapcore.WarnLevel)
 	case "error":
-		level = zap.NewAtomicLevelAt(zapcore.ErrorLevel)
+		lvl = zap.NewAtomicLevelAt(zapcore.ErrorLevel)
 	case "fatal":
-		level = zap.NewAtomicLevelAt(zapcore.FatalLevel)
+		lvl = zap.NewAtomicLevelAt(zapcore.FatalLevel)
 	case "panic":
-		level = zap.NewAtomicLevelAt(zapcore.PanicLevel)
+		lvl = zap.NewAtomicLevelAt(zapcore.PanicLevel)
 	}
-
+	encodeCaller := zapcore.FullCallerEncoder
+	disableCaller := false
+	switch caller {
+	case "short":
+		encodeCaller = zapcore.ShortCallerEncoder
+	case "disable":
+		disableCaller = true
+	}
 	zapEncoderConfig := zapcore.EncoderConfig{
 		MessageKey:    "msg",
-		LevelKey:      "level",
+		LevelKey:      "lvl",
 		TimeKey:       "ts",
 		NameKey:       "logger",
 		CallerKey:     "caller",
@@ -35,20 +43,19 @@ func NewLogger(cfg *config.Config) (*zap.Logger, error) {
 		EncodeTime:    zapcore.ISO8601TimeEncoder,
 		//EncodeDuration: zapcore.SecondsDurationEncoder,
 		EncodeDuration: zapcore.StringDurationEncoder,
-		//EncodeCaller:   zapcore.ShortCallerEncoder,
-		EncodeCaller: zapcore.FullCallerEncoder,
+		EncodeCaller:   encodeCaller,
 	}
 
 	zapConfig := zap.Config{
-		Level:             level,
-		Development:       false,
-		DisableCaller:     cfg.Zap.DisableCaller,
+		Level:             lvl,
+		Development:       development,
+		DisableCaller:     disableCaller,
 		DisableStacktrace: true,
 		Sampling: &zap.SamplingConfig{
 			Initial:    100,
 			Thereafter: 100,
 		},
-		Encoding:         cfg.Zap.Encoding,
+		Encoding:         encoding,
 		EncoderConfig:    zapEncoderConfig,
 		OutputPaths:      []string{"stderr"},
 		ErrorOutputPaths: []string{"stderr"},

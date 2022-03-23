@@ -12,7 +12,8 @@ import (
 
 func main() {
 	cfg := config.NewConfig()
-	log, err := logger.NewLogger(cfg)
+	log, err := logger.NewLogger(cfg.Zap.Level, cfg.Zap.Encoding, cfg.Zap.Caller)
+
 	if err != nil {
 		panic(err)
 	}
