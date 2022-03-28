@@ -183,8 +183,7 @@ func (c *Collector) printStat() {
 		zap.Int64("ftx_send", ftxSend.Load()),
 		zap.Duration("avg_ftx_delay", avgDelay(ftxDelayList)),
 		zap.Duration("stat_elapsed", time.Since(start)),
-		//zap.Any("len", c.avgPriceMap),
-		//zap.Int("len_ftx_delay", len(ftxDelayList)),
+		zap.Any("usdt_price", c.usdtPrice),
 	)
 	//c.log.Info("elapsed", zap.Duration("", time.Since(start)))
 
