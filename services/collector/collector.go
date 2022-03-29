@@ -42,7 +42,8 @@ type Collector struct {
 	maFtxDelay         map[string]*movingaverage.MovingAverage
 	binCountMap        map[string]*atomic.Int64
 	lastBinTime        int64
-	lastID             atomic.Int64
+	lastID             int64
+	idLock             sync.Mutex
 	usdtPrice          decimal.Decimal
 }
 
@@ -268,8 +269,6 @@ func (c *Collector) send(t *TickerData, symbol string) {
 	diff := decimal.Avg(sb.BinTicker.AskPrice, sb.BinTicker.BidPrice).Sub(avgFtx).Div(avgFtx).Mul(d100)
 	ma := c.maPriceMap[sb.FtxTicker.Symbol]
 	c.addDelay(sb.FtxTicker.Symbol, float64(sb.FtxTicker.ReceiveTime-sb.FtxTicker.ServerTime)/1000000)
-	//delay := c.maFtxDelay[sb.FtxTicker.Symbol]
-	//delay.Add()
 	ma.Add(diff.InexactFloat64())
 	c.addCount(sb.FtxTicker.Symbol)
 
@@ -290,27 +289,27 @@ func (c *Collector) send(t *TickerData, symbol string) {
 	}
 }
 
-func (c *Collector) createID(id int64) int64 {
-	//c.idLock.Lock()
-	//defer c.idLock.Unlock()
-	if c.lastID.Sub(id) >= 0 {
-		return c.lastID.Inc()
-	}
-	c.lastID.Store(id)
-	return id
-	//if id <= c.lastID {
-	//	id = c.lastID + 1
-	//}
-	//c.lastID = id
-	//return id
-}
-
 //func (c *Collector) createID(id int64) int64 {
 //	//c.idLock.Lock()
 //	//defer c.idLock.Unlock()
-//	if id <= c.lastID {
-//		id = c.lastID + 1
+//	if c.lastID.Sub(id) >= 0 {
+//		c.lastID.Inc()
 //	}
-//	c.lastID = id
+//	c.lastID.Store(id)
 //	return id
+//	//if id <= c.lastID {
+//	//	id = c.lastID + 1
+//	//}
+//	//c.lastID = id
+//	//return id
 //}
+
+func (c *Collector) createID(id int64) int64 {
+	c.idLock.Lock()
+	defer c.idLock.Unlock()
+	if id <= c.lastID {
+		id = c.lastID + 1
+	}
+	c.lastID = id
+	return id
+}

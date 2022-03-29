@@ -35,10 +35,6 @@ func (c *Collector) binanceHandler(e *binance_ws.WsBookTickerEvent) {
 	t.PrevServerTime = prev.ServerTime
 	t.PrevReceiveTime = prev.ReceiveTime
 
-	//if !t.BidPrice.Equal(t.PrevBidPrice) || !t.AskPrice.Equal(t.PrevAskPrice) {
-	//	binSend.Inc()
-	//
-	//}
 	c.send(t, c.binFtxSymbolMap[t.Symbol])
 	c.send(t, c.binFtxUsdSymbolMap[t.Symbol])
 }
