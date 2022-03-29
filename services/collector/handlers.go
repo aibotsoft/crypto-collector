@@ -7,8 +7,8 @@ import (
 	"go.uber.org/zap"
 )
 
-var ftxDelayList []int64
-var binAll, binSend, ftxAll, ftxSend atomic.Int64
+//var ftxDelayList []int64
+var binAll, ftxAll atomic.Int64
 
 func (c *Collector) loadBinance(symbol string) *TickerData {
 	got, _ := c.binMap.Load(symbol)
@@ -42,23 +42,15 @@ func (c *Collector) binanceHandler(e *binance_ws.WsBookTickerEvent) {
 	t.PrevServerTime = prev.ServerTime
 	t.PrevReceiveTime = prev.ReceiveTime
 
-	if !t.BidPrice.Equal(t.PrevBidPrice) || !t.AskPrice.Equal(t.PrevAskPrice) {
-		binSend.Inc()
-		c.send(t, binanceExchange, c.binFtxSymbolMap[t.Symbol])
-		c.send(t, binanceExchange, c.binFtxUsdSymbolMap[t.Symbol])
-		//c.log.Debug("binance_event",
-		//	zap.Any("t", t),
-		//	)
-	}
+	//if !t.BidPrice.Equal(t.PrevBidPrice) || !t.AskPrice.Equal(t.PrevAskPrice) {
+	//	binSend.Inc()
+	//
+	//}
+	c.send(t, binanceExchange, c.binFtxSymbolMap[t.Symbol])
+	c.send(t, binanceExchange, c.binFtxUsdSymbolMap[t.Symbol])
 }
 
 func (c *Collector) fxtHandler(e *ftx_ws.Response) {
-	if e.Market == usdUsdtMarket {
-		//c.log.Info("e", zap.Any("e", e))
-		c.usdtPrice = e.Data.Bid
-		return
-	}
-
 	ftxAll.Inc()
 	c.ftxCountMap[e.Market].Inc()
 
@@ -77,14 +69,10 @@ func (c *Collector) fxtHandler(e *ftx_ws.Response) {
 	t.PrevAskQty = prev.AskQty
 	t.PrevServerTime = prev.ServerTime
 	t.PrevReceiveTime = prev.ReceiveTime
-	ftxDelayList = append(ftxDelayList, t.ReceiveTime-t.ServerTime)
+	//ftxDelayList = append(ftxDelayList, t.ReceiveTime-t.ServerTime)
 
-	if !t.BidPrice.Equal(t.PrevBidPrice) || !t.AskPrice.Equal(t.PrevAskPrice) {
-		c.send(t, ftxExchange, c.binFtxSymbolMap[t.Symbol])
-		//c.log.Info("ftx_event",
-		//	zap.Any("t", t),
-		//	zap.Any("symbol", c.binFtxSymbolMap[t.Symbol]),
-		//)
-		ftxSend.Inc()
-	}
+	//if !t.BidPrice.Equal(t.PrevBidPrice) || !t.AskPrice.Equal(t.PrevAskPrice) {
+	//	c.send(t, ftxExchange, c.binFtxSymbolMap[t.Symbol])
+	//	ftxSend.Inc()
+	//}
 }

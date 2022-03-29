@@ -39,13 +39,12 @@ type Collector struct {
 	binFtxSymbolMap    map[string]string
 	binFtxUsdSymbolMap map[string]string
 	maPriceMap         map[string]*movingaverage.MovingAverage
+	maFtxDelay         map[string]*movingaverage.MovingAverage
 	ftxCountMap        map[string]*atomic.Int64
 	binCountMap        map[string]*atomic.Int64
 	lastBinTime        int64
-
-	idLock    sync.Mutex
-	lastID    int64
-	usdtPrice decimal.Decimal
+	lastID             atomic.Int64
+	usdtPrice          decimal.Decimal
 }
 
 func NewCollector(cfg *config.Config, log *zap.Logger, ctx context.Context) *Collector {
@@ -59,6 +58,7 @@ func NewCollector(cfg *config.Config, log *zap.Logger, ctx context.Context) *Col
 		binFtxSymbolMap:    make(map[string]string),
 		binFtxUsdSymbolMap: make(map[string]string),
 		maPriceMap:         make(map[string]*movingaverage.MovingAverage),
+		maFtxDelay:         make(map[string]*movingaverage.MovingAverage),
 		ftxCountMap:        make(map[string]*atomic.Int64),
 		binCountMap:        make(map[string]*atomic.Int64),
 		usdtPrice:          decimal.RequireFromString("1"),
@@ -86,7 +86,6 @@ func (c *Collector) Run() error {
 			c.fxtMap.Store(usdSymbol, &t2)
 			c.maPriceMap[usdSymbol] = movingaverage.New(c.cfg.Service.AverageWindow)
 			c.ftxCountMap[usdSymbol] = &atomic.Int64{}
-
 		}
 	}
 
@@ -116,9 +115,13 @@ func (c *Collector) Run() error {
 			c.lastBinTime = event.ReceiveTime
 			c.binanceHandler(&event)
 		case event := <-c.ftxClient.EventCh:
-			c.fxtHandler(&event)
+			if event.Market == usdUsdtMarket {
+				c.usdtPrice = event.Data.Bid
+			} else {
+				c.fxtHandler(&event)
+			}
 		case <-statTick:
-			c.printStat()
+			go c.printStat()
 		case err := <-c.errCh:
 			return err
 		case <-c.ctx.Done():
@@ -130,10 +133,11 @@ func (c *Collector) Run() error {
 func (c *Collector) printStat() {
 	start := time.Now()
 	t := tabby.New()
-	t.AddHeader("symbol", "ma", "count", "min", "max", "bin_all")
+	t.AddHeader("symbol", "ma", "count", "min", "max", "bin_all", "ftx_delay")
 	for _, m := range c.cfg.Markets {
 		symbol := fmt.Sprintf("%s/%s", strings.ToUpper(m), usdt)
 		ma := c.maPriceMap[symbol]
+		delay := c.maFtxDelay[symbol]
 		min, _ := ma.Min()
 		max, _ := ma.Max()
 		t.AddLine(symbol,
@@ -143,6 +147,7 @@ func (c *Collector) printStat() {
 			fmt.Sprintf("%.5f", min),
 			fmt.Sprintf("%.5f", max),
 			c.ftxCountMap[symbol].Load(),
+			int64(delay.Avg()),
 		)
 		c.ftxCountMap[symbol].Store(0)
 	}
@@ -150,6 +155,7 @@ func (c *Collector) printStat() {
 		for _, m := range c.cfg.Markets {
 			symbol := fmt.Sprintf("%s/%s", strings.ToUpper(m), usd)
 			ma := c.maPriceMap[symbol]
+			delay := c.maFtxDelay[symbol]
 			min, _ := ma.Min()
 			max, _ := ma.Max()
 			t.AddLine(symbol,
@@ -159,43 +165,34 @@ func (c *Collector) printStat() {
 				fmt.Sprintf("%.5f", min),
 				fmt.Sprintf("%.5f", max),
 				c.ftxCountMap[symbol].Load(),
+				int64(delay.Avg()),
 			)
 			c.ftxCountMap[symbol].Store(0)
 		}
 	}
-
-	//for symbol, ma := range c.maPriceMap {
-	//	min, _ := ma.Min()
-	//	max, _ := ma.Max()
-	//	t.AddLine(symbol,
-	//		ma.Avg(),
-	//		ma.Count(),
-	//		ma.SlotsFilled(),
-	//		min,
-	//		max,
-	//	)
-	//}
 	t.Print()
 	c.log.Info("stat",
 		zap.Int64("bin_all", binAll.Load()),
-		zap.Int64("bin_send", binSend.Load()),
+		//zap.Int64("bin_send", binSend.Load()),
 		zap.Int64("ftx_all", ftxAll.Load()),
-		zap.Int64("ftx_send", ftxSend.Load()),
-		zap.Duration("avg_ftx_delay", avgDelay(ftxDelayList)),
+		//zap.Int64("ftx_send", ftxSend.Load()),
+		//zap.Duration("avg_ftx_delay", avgDelay(ftxDelayList)),
 		zap.Duration("stat_elapsed", time.Since(start)),
 		zap.Any("usdt_price", c.usdtPrice),
 	)
 	//c.log.Info("elapsed", zap.Duration("", time.Since(start)))
 
 	binAll.Store(0)
-	binSend.Store(0)
+	//binSend.Store(0)
 	ftxAll.Store(0)
-	ftxSend.Store(0)
-	ftxDelayList = nil
+	//ftxSend.Store(0)
+	//ftxDelayList = nil
 }
 func (c *Collector) Close() error {
 	c.log.Info("close_collector")
-	c.ec.Close()
+	if c.ec != nil {
+		c.ec.Close()
+	}
 	return nil
 }
 
@@ -226,32 +223,47 @@ func avgDelay(list []int64) time.Duration {
 	return time.Duration(total / int64(len(list)))
 }
 
+func (c *Collector) addDelay(sym string, value float64) {
+	average, ok := c.maFtxDelay[sym]
+	if !ok {
+		c.log.Info("add_delay", zap.String("sym", sym), zap.Float64("delay", value))
+		c.maFtxDelay[sym] = movingaverage.New(c.cfg.Service.AverageWindow)
+		c.maFtxDelay[sym].Add(value)
+	} else {
+		average.Add(value)
+	}
+}
 func (c *Collector) send(t *TickerData, e string, symbol string) {
 	var sb Surebet
-	if e == binanceExchange {
-		sb.FtxTicker = c.loadTicker(symbol)
-		sb.BinTicker = t
-	} else {
-		sb.FtxTicker = t
-		sb.BinTicker = c.loadBinance(symbol)
-	}
+	sb.FtxTicker = c.loadTicker(symbol)
+	sb.BinTicker = t
+	//if e == binanceExchange {
+	//	sb.FtxTicker = c.loadTicker(symbol)
+	//	sb.BinTicker = t
+	//} else {
+	//	sb.FtxTicker = t
+	//	sb.BinTicker = c.loadBinance(symbol)
+	//}
 	if sb.FtxTicker.AskPrice.IsZero() || sb.BinTicker.AskPrice.IsZero() {
 		return
 	}
-	sb.UsdtPrice = c.usdtPrice
 
 	avgFtx := decimal.Avg(sb.FtxTicker.AskPrice, sb.FtxTicker.BidPrice)
 	if strings.Index(sb.FtxTicker.Symbol, usdt) == -1 {
-		avgFtx = avgFtx.Div(sb.UsdtPrice)
+		avgFtx = avgFtx.Div(c.usdtPrice)
 	}
 
 	diff := decimal.Avg(sb.BinTicker.AskPrice, sb.BinTicker.BidPrice).Sub(avgFtx).Div(avgFtx).Mul(d100)
 	ma := c.maPriceMap[sb.FtxTicker.Symbol]
+	c.addDelay(sb.FtxTicker.Symbol, float64(sb.FtxTicker.ReceiveTime-sb.FtxTicker.ServerTime)/1000000)
+	//delay := c.maFtxDelay[sb.FtxTicker.Symbol]
+	//delay.Add()
 	ma.Add(diff.InexactFloat64())
 
 	if !ma.SlotsFilled() {
 		return
 	}
+	sb.UsdtPrice = c.usdtPrice
 	sb.LastBinTime = c.lastBinTime
 	sb.ID = c.createID(t.ReceiveTime)
 	sb.AvgPriceDiff = decimal.NewFromFloat(ma.Avg()).Round(4)
@@ -263,23 +275,29 @@ func (c *Collector) send(t *TickerData, e string, symbol string) {
 	if err != nil {
 		c.log.Warn("send_error", zap.Error(err))
 	}
-	//if e == binanceExchange {
-	//	c.log.Info("sb",
-	//		zap.Any("e", e),
-	//		zap.Any("symbol", symbol),
-	//		zap.Any("id", sb.ID),
-	//		zap.Any("ftx", sb.FtxTicker),
-	//	)
-	//}
-
 }
 
 func (c *Collector) createID(id int64) int64 {
-	c.idLock.Lock()
-	defer c.idLock.Unlock()
-	if id <= c.lastID {
-		id = c.lastID + 1
+	//c.idLock.Lock()
+	//defer c.idLock.Unlock()
+	if c.lastID.Sub(id) >= 0 {
+		return c.lastID.Inc()
 	}
-	c.lastID = id
+	c.lastID.Store(id)
 	return id
+	//if id <= c.lastID {
+	//	id = c.lastID + 1
+	//}
+	//c.lastID = id
+	//return id
 }
+
+//func (c *Collector) createID(id int64) int64 {
+//	//c.idLock.Lock()
+//	//defer c.idLock.Unlock()
+//	if id <= c.lastID {
+//		id = c.lastID + 1
+//	}
+//	c.lastID = id
+//	return id
+//}
