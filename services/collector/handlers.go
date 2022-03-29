@@ -3,12 +3,8 @@ package collector
 import (
 	"github.com/aibotsoft/crypto-collector/pkg/binance_ws"
 	"github.com/aibotsoft/crypto-collector/pkg/ftx_ws"
-	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
-
-//var ftxDelayList []int64
-var binAll, ftxAll atomic.Int64
 
 func (c *Collector) loadBinance(symbol string) *TickerData {
 	got, _ := c.binMap.Load(symbol)
@@ -24,9 +20,6 @@ func (c *Collector) loadTicker(symbol string) *TickerData {
 }
 
 func (c *Collector) binanceHandler(e *binance_ws.WsBookTickerEvent) {
-	binAll.Inc()
-	c.binCountMap[e.Symbol].Inc()
-
 	t := c.loadBinance(e.Symbol)
 	prev := *t
 	t.BidPrice = e.BestBidPrice
@@ -46,14 +39,11 @@ func (c *Collector) binanceHandler(e *binance_ws.WsBookTickerEvent) {
 	//	binSend.Inc()
 	//
 	//}
-	c.send(t, binanceExchange, c.binFtxSymbolMap[t.Symbol])
-	c.send(t, binanceExchange, c.binFtxUsdSymbolMap[t.Symbol])
+	c.send(t, c.binFtxSymbolMap[t.Symbol])
+	c.send(t, c.binFtxUsdSymbolMap[t.Symbol])
 }
 
 func (c *Collector) fxtHandler(e *ftx_ws.Response) {
-	ftxAll.Inc()
-	c.ftxCountMap[e.Market].Inc()
-
 	t := c.loadTicker(e.Market)
 	prev := *t
 	t.BidPrice = e.Data.Bid
@@ -69,8 +59,6 @@ func (c *Collector) fxtHandler(e *ftx_ws.Response) {
 	t.PrevAskQty = prev.AskQty
 	t.PrevServerTime = prev.ServerTime
 	t.PrevReceiveTime = prev.ReceiveTime
-	//ftxDelayList = append(ftxDelayList, t.ReceiveTime-t.ServerTime)
-
 	//if !t.BidPrice.Equal(t.PrevBidPrice) || !t.AskPrice.Equal(t.PrevAskPrice) {
 	//	c.send(t, ftxExchange, c.binFtxSymbolMap[t.Symbol])
 	//	ftxSend.Inc()

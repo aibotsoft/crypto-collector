@@ -40,7 +40,6 @@ type Collector struct {
 	binFtxUsdSymbolMap map[string]string
 	maPriceMap         map[string]*movingaverage.MovingAverage
 	maFtxDelay         map[string]*movingaverage.MovingAverage
-	ftxCountMap        map[string]*atomic.Int64
 	binCountMap        map[string]*atomic.Int64
 	lastBinTime        int64
 	lastID             atomic.Int64
@@ -59,7 +58,6 @@ func NewCollector(cfg *config.Config, log *zap.Logger, ctx context.Context) *Col
 		binFtxUsdSymbolMap: make(map[string]string),
 		maPriceMap:         make(map[string]*movingaverage.MovingAverage),
 		maFtxDelay:         make(map[string]*movingaverage.MovingAverage),
-		ftxCountMap:        make(map[string]*atomic.Int64),
 		binCountMap:        make(map[string]*atomic.Int64),
 		usdtPrice:          decimal.RequireFromString("1"),
 	}
@@ -77,7 +75,6 @@ func (c *Collector) Run() error {
 		t := TickerData{Symbol: symbol}
 		c.fxtMap.Store(symbol, &t)
 		c.maPriceMap[symbol] = movingaverage.New(c.cfg.Service.AverageWindow)
-		c.ftxCountMap[symbol] = &atomic.Int64{}
 
 		if c.cfg.Service.EnableUSD {
 			usdSymbol := fmt.Sprintf("%s/%s", strings.ToUpper(m), usd)
@@ -85,7 +82,6 @@ func (c *Collector) Run() error {
 			t2 := TickerData{Symbol: usdSymbol}
 			c.fxtMap.Store(usdSymbol, &t2)
 			c.maPriceMap[usdSymbol] = movingaverage.New(c.cfg.Service.AverageWindow)
-			c.ftxCountMap[usdSymbol] = &atomic.Int64{}
 		}
 	}
 
@@ -131,63 +127,62 @@ func (c *Collector) Run() error {
 }
 
 func (c *Collector) printStat() {
-	start := time.Now()
 	t := tabby.New()
-	t.AddHeader("symbol", "ma", "count", "min", "max", "bin_all", "ftx_delay")
+	t.AddHeader("symbol", "ma", "count", "min", "max", "bin_all", "ftx_delay", "usdt_price")
 	for _, m := range c.cfg.Markets {
 		symbol := fmt.Sprintf("%s/%s", strings.ToUpper(m), usdt)
 		ma := c.maPriceMap[symbol]
-		delay := c.maFtxDelay[symbol]
 		min, _ := ma.Min()
 		max, _ := ma.Max()
-		t.AddLine(symbol,
+		t.AddLine(
+			symbol,
 			fmt.Sprintf("%.5f", ma.Avg()),
 			ma.Count(),
 			//ma.SlotsFilled(),
 			fmt.Sprintf("%.5f", min),
 			fmt.Sprintf("%.5f", max),
-			c.ftxCountMap[symbol].Load(),
-			int64(delay.Avg()),
+			c.getCountAndReset(symbol),
+			c.avgDelay(symbol),
+			c.usdtPrice,
 		)
-		c.ftxCountMap[symbol].Store(0)
 	}
 	if c.cfg.Service.EnableUSD {
 		for _, m := range c.cfg.Markets {
 			symbol := fmt.Sprintf("%s/%s", strings.ToUpper(m), usd)
 			ma := c.maPriceMap[symbol]
-			delay := c.maFtxDelay[symbol]
 			min, _ := ma.Min()
 			max, _ := ma.Max()
-			t.AddLine(symbol,
+			t.AddLine(
+				symbol,
 				fmt.Sprintf("%.5f", ma.Avg()),
 				ma.Count(),
-				//ma.SlotsFilled(),
 				fmt.Sprintf("%.5f", min),
 				fmt.Sprintf("%.5f", max),
-				c.ftxCountMap[symbol].Load(),
-				int64(delay.Avg()),
+				c.getCountAndReset(symbol),
+				c.avgDelay(symbol),
+				c.usdtPrice,
 			)
-			c.ftxCountMap[symbol].Store(0)
 		}
 	}
 	t.Print()
-	c.log.Info("stat",
-		zap.Int64("bin_all", binAll.Load()),
-		//zap.Int64("bin_send", binSend.Load()),
-		zap.Int64("ftx_all", ftxAll.Load()),
-		//zap.Int64("ftx_send", ftxSend.Load()),
-		//zap.Duration("avg_ftx_delay", avgDelay(ftxDelayList)),
-		zap.Duration("stat_elapsed", time.Since(start)),
-		zap.Any("usdt_price", c.usdtPrice),
-	)
+	//c.log.Info("stat",
+	//	//zap.Int64("bin_all", binAll.Load()),
+	//	//zap.Int64("bin_send", binSend.Load()),
+	//	//zap.Int64("ftx_all", ftxAll.Load()),
+	//	//zap.Int64("ftx_send", ftxSend.Load()),
+	//	//zap.Duration("avg_ftx_delay", avgDelay(ftxDelayList)),
+	//	zap.Duration("stat_elapsed", time.Since(start)),
+	//	zap.Any("usdt_price", c.usdtPrice),
+	//)
 	//c.log.Info("elapsed", zap.Duration("", time.Since(start)))
 
-	binAll.Store(0)
+	//binAll.Store(0)
 	//binSend.Store(0)
-	ftxAll.Store(0)
+	//ftxAll.Store(0)
 	//ftxSend.Store(0)
 	//ftxDelayList = nil
 }
+
 func (c *Collector) Close() error {
 	c.log.Info("close_collector")
 	if c.ec != nil {
@@ -212,28 +207,45 @@ func (c *Collector) connectNats() error {
 func (c *Collector) errHandler(err error) {
 	c.log.Error("binance_ws_error", zap.Error(err))
 }
-func avgDelay(list []int64) time.Duration {
-	if len(list) == 0 {
+
+func (c *Collector) getCountAndReset(sym string) int64 {
+	cnt := c.binCountMap[sym]
+	if cnt == nil {
 		return 0
 	}
-	var total int64
-	for i := 0; i < len(list); i++ {
-		total = total + list[i]
-	}
-	return time.Duration(total / int64(len(list)))
-}
+	value := cnt.Load()
+	cnt.Store(0)
+	return value
 
+}
+func (c *Collector) addCount(sym string) {
+	cnt, ok := c.binCountMap[sym]
+	if !ok {
+		c.binCountMap[sym] = &atomic.Int64{}
+		c.binCountMap[sym].Inc()
+	} else {
+		cnt.Inc()
+	}
+}
 func (c *Collector) addDelay(sym string, value float64) {
 	average, ok := c.maFtxDelay[sym]
 	if !ok {
-		c.log.Info("add_delay", zap.String("sym", sym), zap.Float64("delay", value))
+		c.log.Debug("add_delay", zap.String("sym", sym), zap.Float64("delay", value))
 		c.maFtxDelay[sym] = movingaverage.New(c.cfg.Service.AverageWindow)
 		c.maFtxDelay[sym].Add(value)
 	} else {
 		average.Add(value)
 	}
 }
-func (c *Collector) send(t *TickerData, e string, symbol string) {
+func (c *Collector) avgDelay(sym string) int64 {
+	delay := c.maFtxDelay[sym]
+	if delay != nil {
+		return int64(delay.Avg())
+
+	}
+	return 0
+}
+func (c *Collector) send(t *TickerData, symbol string) {
 	var sb Surebet
 	sb.FtxTicker = c.loadTicker(symbol)
 	sb.BinTicker = t
@@ -259,6 +271,7 @@ func (c *Collector) send(t *TickerData, e string, symbol string) {
 	//delay := c.maFtxDelay[sb.FtxTicker.Symbol]
 	//delay.Add()
 	ma.Add(diff.InexactFloat64())
+	c.addCount(sb.FtxTicker.Symbol)
 
 	if !ma.SlotsFilled() {
 		return
