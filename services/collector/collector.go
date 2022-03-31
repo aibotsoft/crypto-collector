@@ -12,14 +12,13 @@ import (
 	"github.com/shopspring/decimal"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
 )
 
 const cryptoSubject = "crypto-surebet"
-const binanceExchange = "binance"
-const ftxExchange = "ftx"
 const usdt = "USDT"
 const usd = "USD"
 const usdUsdtMarket = "USDT/USD"
@@ -48,13 +47,11 @@ type Collector struct {
 }
 
 func NewCollector(cfg *config.Config, log *zap.Logger, ctx context.Context) *Collector {
-	return &Collector{
+	c := &Collector{
 		cfg:                cfg,
 		log:                log,
 		ctx:                ctx,
 		errCh:              make(chan error),
-		ftxClient:          ftx_ws.NewWsClient(cfg, log, ctx),
-		binClient:          binance_ws.NewWsClient(cfg, log, ctx),
 		binFtxSymbolMap:    make(map[string]string),
 		binFtxUsdSymbolMap: make(map[string]string),
 		maPriceMap:         make(map[string]*movingaverage.MovingAverage),
@@ -62,6 +59,9 @@ func NewCollector(cfg *config.Config, log *zap.Logger, ctx context.Context) *Col
 		binCountMap:        make(map[string]*atomic.Int64),
 		usdtPrice:          decimal.RequireFromString("1"),
 	}
+	c.ftxClient = ftx_ws.NewWsClient(cfg, log, ctx, c.ftxEventHandler)
+	c.binClient = binance_ws.NewWsClient(cfg, log, ctx, c.binEventHandler)
+	return c
 }
 func (c *Collector) Run() error {
 	for _, m := range c.cfg.Markets {
@@ -97,26 +97,15 @@ func (c *Collector) Run() error {
 		return fmt.Errorf("connect_nats_error: %w", err)
 	}
 	statTick := time.Tick(c.cfg.Service.LogStatPeriod)
-	//statTick := time.Tick(time.Second * 20)
 	go func() {
 		c.errCh <- c.binClient.Serve()
 	}()
 	go func() {
 		c.errCh <- c.ftxClient.Serve()
 	}()
+
 	for {
 		select {
-		case err := <-c.binClient.ReadErr:
-			c.log.Warn("binance_read_error", zap.Error(err))
-		case event := <-c.binClient.EventCh:
-			c.lastBinTime = event.ReceiveTime
-			c.binanceHandler(&event)
-		case event := <-c.ftxClient.EventCh:
-			if event.Market == usdUsdtMarket {
-				c.usdtPrice = event.Data.Bid
-			} else {
-				c.fxtHandler(&event)
-			}
 		case <-statTick:
 			go c.printStat()
 		case err := <-c.errCh:
@@ -127,9 +116,35 @@ func (c *Collector) Run() error {
 	}
 }
 
+func (c *Collector) binEventHandler(event *binance_ws.WsBookTickerEvent) {
+	c.lastBinTime = event.ReceiveTime
+	c.binanceHandler(event)
+	done := time.Now().UnixNano()
+	if done-event.ReceiveTime > 2000000 {
+		c.log.Debug("bin_receive_vs_send_time",
+			zap.Duration("el", time.Duration(done-event.ReceiveTime)),
+			zap.Int("goroutine", runtime.NumGoroutine()),
+		)
+	}
+}
+
+func (c *Collector) ftxEventHandler(event *ftx_ws.Response) {
+	if event.Market == usdUsdtMarket {
+		c.usdtPrice = event.Data.Bid
+	} else {
+		c.ftxHandler(event)
+	}
+	done := time.Now().UnixNano()
+	if done-event.ReceiveTime > 10000 {
+		c.log.Debug("ftx_receive_vs_send_time",
+			zap.Duration("el", time.Duration(done-event.ReceiveTime)),
+			zap.Int("goroutine", runtime.NumGoroutine()),
+		)
+	}
+}
 func (c *Collector) printStat() {
 	t := tabby.New()
-	t.AddHeader("symbol", "ma", "count", "min", "max", "bin_all", "ftx_delay", "usdt_price")
+	t.AddHeader("symbol", "ma", "count", "min", "max", "bin_all", "ftx_delay", "usdt_price", "time")
 	for _, m := range c.cfg.Markets {
 		symbol := fmt.Sprintf("%s/%s", strings.ToUpper(m), usdt)
 		ma := c.maPriceMap[symbol]
@@ -137,14 +152,14 @@ func (c *Collector) printStat() {
 		max, _ := ma.Max()
 		t.AddLine(
 			symbol,
-			fmt.Sprintf("%.5f", ma.Avg()),
+			fmt.Sprintf("%.4f", ma.Avg()),
 			ma.Count(),
-			//ma.SlotsFilled(),
-			fmt.Sprintf("%.5f", min),
-			fmt.Sprintf("%.5f", max),
+			fmt.Sprintf("%.4f", min),
+			fmt.Sprintf("%.4f", max),
 			c.getCountAndReset(symbol),
 			c.avgDelay(symbol),
 			c.usdtPrice,
+			time.Now(),
 		)
 	}
 	if c.cfg.Service.EnableUSD {
@@ -155,37 +170,21 @@ func (c *Collector) printStat() {
 			max, _ := ma.Max()
 			t.AddLine(
 				symbol,
-				fmt.Sprintf("%.5f", ma.Avg()),
+				fmt.Sprintf("%.4f", ma.Avg()),
 				ma.Count(),
-				fmt.Sprintf("%.5f", min),
-				fmt.Sprintf("%.5f", max),
+				fmt.Sprintf("%.4f", min),
+				fmt.Sprintf("%.4f", max),
 				c.getCountAndReset(symbol),
 				c.avgDelay(symbol),
 				c.usdtPrice,
+				time.Now(),
 			)
 		}
 	}
 	t.Print()
-	//c.log.Info("stat",
-	//	//zap.Int64("bin_all", binAll.Load()),
-	//	//zap.Int64("bin_send", binSend.Load()),
-	//	//zap.Int64("ftx_all", ftxAll.Load()),
-	//	//zap.Int64("ftx_send", ftxSend.Load()),
-	//	//zap.Duration("avg_ftx_delay", avgDelay(ftxDelayList)),
-	//	zap.Duration("stat_elapsed", time.Since(start)),
-	//	zap.Any("usdt_price", c.usdtPrice),
-	//)
-	//c.log.Info("elapsed", zap.Duration("", time.Since(start)))
-
-	//binAll.Store(0)
-	//binSend.Store(0)
-	//ftxAll.Store(0)
-	//ftxSend.Store(0)
-	//ftxDelayList = nil
 }
 
 func (c *Collector) Close() error {
-	c.log.Info("close_collector")
 	if c.ec != nil {
 		c.ec.Close()
 	}
@@ -231,7 +230,7 @@ func (c *Collector) addCount(sym string) {
 func (c *Collector) addDelay(sym string, value float64) {
 	average, ok := c.maFtxDelay[sym]
 	if !ok {
-		c.log.Debug("add_delay", zap.String("sym", sym), zap.Float64("delay", value))
+		c.log.Debug("new_delay_map_element", zap.String("sym", sym), zap.Float64("delay", value))
 		c.maFtxDelay[sym] = movingaverage.New(c.cfg.Service.AverageWindow)
 		c.maFtxDelay[sym].Add(value)
 	} else {
@@ -242,7 +241,6 @@ func (c *Collector) avgDelay(sym string) int64 {
 	delay := c.maFtxDelay[sym]
 	if delay != nil {
 		return int64(delay.Avg())
-
 	}
 	return 0
 }
@@ -250,13 +248,6 @@ func (c *Collector) send(t *TickerData, symbol string) {
 	var sb Surebet
 	sb.FtxTicker = c.loadTicker(symbol)
 	sb.BinTicker = t
-	//if e == binanceExchange {
-	//	sb.FtxTicker = c.loadTicker(symbol)
-	//	sb.BinTicker = t
-	//} else {
-	//	sb.FtxTicker = t
-	//	sb.BinTicker = c.loadBinance(symbol)
-	//}
 	if sb.FtxTicker.AskPrice.IsZero() || sb.BinTicker.AskPrice.IsZero() {
 		return
 	}
@@ -283,27 +274,12 @@ func (c *Collector) send(t *TickerData, symbol string) {
 	min, _ := ma.Min()
 	sb.MaxPriceDiff = decimal.NewFromFloat(max).Round(4)
 	sb.MinPriceDiff = decimal.NewFromFloat(min).Round(4)
+	//start := time.Now().UnixNano()
 	err := c.ec.Publish(cryptoSubject, &sb)
 	if err != nil {
 		c.log.Warn("send_error", zap.Error(err))
 	}
 }
-
-//func (c *Collector) createID(id int64) int64 {
-//	//c.idLock.Lock()
-//	//defer c.idLock.Unlock()
-//	if c.lastID.Sub(id) >= 0 {
-//		c.lastID.Inc()
-//	}
-//	c.lastID.Store(id)
-//	return id
-//	//if id <= c.lastID {
-//	//	id = c.lastID + 1
-//	//}
-//	//c.lastID = id
-//	//return id
-//}
-
 func (c *Collector) createID(id int64) int64 {
 	c.idLock.Lock()
 	defer c.idLock.Unlock()

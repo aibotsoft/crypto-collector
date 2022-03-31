@@ -22,18 +22,21 @@ type WsClient struct {
 	ctx     context.Context
 	errCh   chan error
 	Conn    *websocket.Conn
-	EventCh chan Response
+	handler func(response *Response)
+
+	//EventCh chan *Response
 }
 
-func NewWsClient(cfg *config.Config, log *zap.Logger, ctx context.Context) *WsClient {
+func NewWsClient(cfg *config.Config, log *zap.Logger, ctx context.Context, handler func(response *Response)) *WsClient {
 	jsonByte, _ := json.Marshal(Request{Op: "ping"})
 	pingMsg, _ = websocket.NewPreparedMessage(websocket.TextMessage, jsonByte)
 	ws := &WsClient{
 		cfg:     cfg,
 		log:     log,
 		ctx:     ctx,
+		handler: handler,
 		errCh:   make(chan error),
-		EventCh: make(chan Response, 10000),
+		//EventCh: make(chan *Response, 1000),
 	}
 	return ws
 }
@@ -88,6 +91,12 @@ func (w *WsClient) Ping() {
 	}
 }
 
+const (
+	update     = "update"
+	pong       = "pong"
+	subscribed = "subscribed"
+)
+
 func (w *WsClient) ReadLoop() {
 	for {
 		if w.Conn == nil {
@@ -104,14 +113,13 @@ func (w *WsClient) ReadLoop() {
 			continue
 		}
 		switch event.Type {
-		case "update":
-			//w.log.Debug("event_ch", zap.Int("len", len(w.EventCh)))
+		case update:
 			event.ReceiveTime = time.Now().UnixNano()
-			w.EventCh <- event
-		case "pong":
-			w.log.Debug("pong", zap.Duration("elapsed", time.Since(pingStart)))
-		case "subscribed":
-			w.log.Debug("subscribed", zap.Duration("elapsed", time.Since(subscribeStart)), zap.Any("event", event))
+			w.handler(&event)
+		case pong:
+			w.log.Debug(pong, zap.Duration("elapsed", time.Since(pingStart)))
+		case subscribed:
+			w.log.Debug(subscribed, zap.Duration("elapsed", time.Since(subscribeStart)), zap.Any("event", event))
 		default:
 			w.log.Debug("unknown_event_type", zap.String("type", event.Type), zap.Any("event", event))
 		}
@@ -121,17 +129,12 @@ func (w *WsClient) ReadLoop() {
 func (w *WsClient) Serve() error {
 	go w.ReadLoop()
 	pingTimer := time.Tick(time.Second * 15)
-	//failTimer := time.Tick(time.Second * 20)
 	err := w.ConnectAndSubscribe()
 	if err != nil {
 		return err
 	}
 	for {
 		select {
-		case <-w.ctx.Done():
-			w.log.Info("close_fxt_ws_conn", zap.String("service", w.cfg.Ftx.Name))
-			w.Conn.Close()
-			return nil
 		case err := <-w.errCh:
 			w.log.Info("serve_error", zap.String("service", w.cfg.Ftx.Name), zap.Error(err))
 			err = w.ConnectAndSubscribe()
@@ -139,11 +142,12 @@ func (w *WsClient) Serve() error {
 				w.log.Warn("ConnectAndSubscribe_error", zap.String("service", w.cfg.Ftx.Name), zap.Error(err))
 				//time.Sleep(time.Second)
 			}
-		//case <-failTimer:
-		//	w.Conn.Close()
-		//	w.log.Debug("close_done")
 		case <-pingTimer:
 			w.Ping()
+		case <-w.ctx.Done():
+			w.log.Info("close_fxt_ws_conn", zap.String("service", w.cfg.Ftx.Name))
+			w.Conn.Close()
+			return nil
 		}
 	}
 }

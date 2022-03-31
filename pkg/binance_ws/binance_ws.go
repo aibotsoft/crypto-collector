@@ -16,18 +16,16 @@ type WsClient struct {
 	ctx     context.Context
 	errCh   chan error
 	Conn    *websocket.Conn
-	EventCh chan WsBookTickerEvent
-	ReadErr chan error
+	handler func(event *WsBookTickerEvent)
 }
 
-func NewWsClient(cfg *config.Config, log *zap.Logger, ctx context.Context) *WsClient {
+func NewWsClient(cfg *config.Config, log *zap.Logger, ctx context.Context, handler func(event *WsBookTickerEvent)) *WsClient {
 	ws := &WsClient{
 		cfg:     cfg,
 		log:     log,
 		ctx:     ctx,
 		errCh:   make(chan error),
-		ReadErr: make(chan error),
-		EventCh: make(chan WsBookTickerEvent, 10000),
+		handler: handler,
 	}
 	return ws
 }
@@ -55,7 +53,7 @@ func (w *WsClient) ReadLoop() {
 	for {
 		if w.Conn == nil {
 			w.log.Debug("conn_nil", zap.String("service", w.cfg.Binance.Name))
-			time.Sleep(time.Millisecond * 50)
+			time.Sleep(time.Millisecond * 100)
 			continue
 		}
 		var event Event
@@ -63,12 +61,11 @@ func (w *WsClient) ReadLoop() {
 		if err != nil {
 			w.log.Warn("ReadLoop_error", zap.Error(err))
 			w.errCh <- fmt.Errorf("read_loop_error: %w", err)
-			w.ReadErr <- fmt.Errorf("read_loop_error: %w", err)
 			time.Sleep(time.Second * 2)
 			continue
 		}
 		event.Data.ReceiveTime = time.Now().UnixNano()
-		w.EventCh <- event.Data
+		w.handler(&event.Data)
 	}
 }
 func (w *WsClient) Serve() error {
@@ -79,18 +76,17 @@ func (w *WsClient) Serve() error {
 	}
 	for {
 		select {
-		case <-w.ctx.Done():
-			w.log.Info("close_binance_ws_conn")
-			w.Conn.Close()
-			return nil
 		case err := <-w.errCh:
-			w.log.Info("serve_error", zap.String("service", w.cfg.Binance.Name), zap.Error(err))
+			w.log.Error("serve_error", zap.String("service", w.cfg.Binance.Name), zap.Error(err))
 			err = w.ConnectAndSubscribe()
 			if err != nil {
 				w.log.Warn("ConnectAndSubscribe_error", zap.Error(err))
 				//time.Sleep(time.Second)
 			}
-
+		case <-w.ctx.Done():
+			w.log.Info("close_binance_ws_conn")
+			w.Conn.Close()
+			return nil
 		}
 	}
 }
